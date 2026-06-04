@@ -8,6 +8,7 @@ const connectDB = require('../lib/db');
 const Shop = require('../models/Shop');
 
 const app = express();
+app.use(express.json());
 app.use(cors({
   origin: [
     'https://inventory-alert-app.pages.dev',
@@ -150,17 +151,61 @@ app.get('/auth/callback', async (req, res) => {
 app.get('/inventory/:shop', async (req, res) => {
   try {
     const shopDoc = await Shop.findOne({ shop: req.params.shop });
-    if (!shopDoc) return res.status(404).send('Shop find error or Shop not found');
+    if (!shopDoc) return res.status(404).send('Shop not found');
 
     const response = await axios.get(
-      `https://${shopDoc.shop}/admin/api/2026-04/products.json`,
+      `https://${shopDoc.shop}/admin/api/2026-04/products.json?limit=50`,
       { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
     );
 
-    res.json(response.data);
+    // For each product, get inventory for each variant
+    const products = response.data.products.map(product => ({
+      id: product.id,
+      title: product.title,
+      variants: product.variants.map(variant => ({
+        id: variant.id,
+        title: variant.title,
+        sku: variant.sku,
+        inventory_quantity: variant.inventory_quantity,
+        inventory_item_id: variant.inventory_item_id
+      }))
+    }));
+
+    res.json({ products });
   } catch (err) {
     console.error(err);
     res.status(500).send('Error fetching inventory');
+  }
+});
+
+// Save settings for a shop
+app.post('/settings/:shop', async (req, res) => {
+  try {
+    const { alertEmail, globalThreshold } = req.body;
+    await Shop.findOneAndUpdate(
+      { shop: req.params.shop },
+      { alertEmail, globalThreshold },
+      { upsert: true }
+    );
+    res.json({ message: 'Settings saved!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error saving settings');
+  }
+});
+
+// Get settings for a shop
+app.get('/settings/:shop', async (req, res) => {
+  try {
+    const shopDoc = await Shop.findOne({ shop: req.params.shop });
+    if (!shopDoc) return res.status(404).send('Shop not found');
+    res.json({
+      alertEmail: shopDoc.alertEmail,
+      globalThreshold: shopDoc.globalThreshold
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error fetching settings');
   }
 });
 

@@ -11,6 +11,11 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [backendStatus, setBackendStatus] = useState("checking");
+  
+  // Settings state
+  const [alertEmail, setAlertEmail] = useState("");
+  const [globalThreshold, setGlobalThreshold] = useState(5);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -26,7 +31,7 @@ function App() {
       return;
     }
 
-    fetchProducts(shopParam);
+    fetchInitialData(shopParam);
   }, []);
 
   const checkBackendHealth = async () => {
@@ -43,15 +48,44 @@ function App() {
     }
   };
 
-  const fetchProducts = async (shopName) => {
+  const fetchInitialData = async (shopName) => {
+    setLoading(true);
     try {
-      const res = await axios.get(`${BACKEND_URL}/inventory/${shopName}`);
-      setProducts(res.data.products || []);
+      // Fetch products and settings in parallel
+      const [inventoryRes, settingsRes] = await Promise.all([
+        axios.get(`${BACKEND_URL}/inventory/${shopName}`),
+        axios.get(`${BACKEND_URL}/settings/${shopName}`).catch(() => ({ data: {} }))
+      ]);
+
+      setProducts(inventoryRes.data.products || []);
+      
+      if (settingsRes.data) {
+        setAlertEmail(settingsRes.data.alertEmail || "");
+        setGlobalThreshold(settingsRes.data.globalThreshold ?? 5);
+      }
+      
       setLoading(false);
     } catch (err) {
-      console.error("Fetch Error:", err);
-      setError("Failed to fetch products. Check if the app is correctly installed.");
+      console.error("Data Fetch Error:", err);
+      setError("Failed to fetch data. Check if the app is correctly installed.");
       setLoading(false);
+    }
+  };
+
+  const handleSaveSettings = async (e) => {
+    e.preventDefault();
+    setSavingSettings(true);
+    try {
+      await axios.post(`${BACKEND_URL}/settings/${shop}`, {
+        alertEmail,
+        globalThreshold: parseInt(globalThreshold, 10)
+      });
+      alert("Settings saved successfully!");
+    } catch (err) {
+      console.error("Save Settings Error:", err);
+      alert("Failed to save settings.");
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -66,6 +100,39 @@ function App() {
       
       <p style={styles.subtext}>Store: {shop || "Detecting..."}</p>
 
+      {shop && (
+        <section style={styles.settingsSection}>
+          <h2 style={styles.sectionHeading}>Alert Settings</h2>
+          <form onSubmit={handleSaveSettings} style={styles.form}>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>Notification Email</label>
+              <input 
+                type="email" 
+                value={alertEmail} 
+                onChange={(e) => setAlertEmail(e.target.value)}
+                placeholder="email@example.com"
+                style={styles.input}
+                required
+              />
+            </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>Global Low Stock Threshold</label>
+              <input 
+                type="number" 
+                value={globalThreshold} 
+                onChange={(e) => setGlobalThreshold(e.target.value)}
+                style={styles.input}
+                min="0"
+                required
+              />
+            </div>
+            <button type="submit" disabled={savingSettings} style={styles.button}>
+              {savingSettings ? "Saving..." : "Save Settings"}
+            </button>
+          </form>
+        </section>
+      )}
+
       {loading ? (
         <div style={styles.center}>Loading your inventory...</div>
       ) : error ? (
@@ -74,20 +141,31 @@ function App() {
           <p style={{fontSize: '12px'}}>URL: {BACKEND_URL}/inventory/{shop}</p>
         </div>
       ) : (
-        <div style={styles.productList}>
-          {products.length === 0 ? (
-            <p>No products found or check your Shopify permissions.</p>
-          ) : (
-            products.map((product) => (
-              <div key={product.id} style={styles.card}>
-                <h3 style={styles.productName}>{product.title}</h3>
-                <p style={styles.stock}>
-                  Variants: {product.variants.length}
-                </p>
-              </div>
-            ))
-          )}
-        </div>
+        <section>
+          <h2 style={styles.sectionHeading}>Current Inventory</h2>
+          <div style={styles.productList}>
+            {products.length === 0 ? (
+              <p>No products found or check your Shopify permissions.</p>
+            ) : (
+              products.map((product) => (
+                <div key={product.id} style={styles.card}>
+                  <h3 style={styles.productName}>{product.title}</h3>
+                  {product.variants.map((variant) => (
+                    <div key={variant.id} style={styles.variant}>
+                      <span>{variant.title} {variant.sku ? `(${variant.sku})` : ""}</span>
+                      <span style={{
+                        color: variant.inventory_quantity <= globalThreshold ? '#c53030' : '#2f855a',
+                        fontWeight: 'bold'
+                      }}>
+                        {variant.inventory_quantity} in stock
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+        </section>
       )}
     </div>
   );
@@ -99,6 +177,8 @@ const styles = {
     margin: "0 auto",
     padding: "32px 16px",
     fontFamily: "sans-serif",
+    backgroundColor: "#f9fafb",
+    minHeight: "100vh",
   },
   header: {
     display: "flex",
@@ -110,6 +190,13 @@ const styles = {
     fontSize: "28px",
     fontWeight: "bold",
     margin: 0,
+    color: "#1a202c",
+  },
+  sectionHeading: {
+    fontSize: "18px",
+    fontWeight: "600",
+    marginBottom: "16px",
+    color: "#2d3748",
   },
   statusBadge: (status) => ({
     padding: "4px 8px",
@@ -121,8 +208,49 @@ const styles = {
     border: `1px solid ${status === "connected" ? "#81e6d9" : "#feb2b2"}`,
   }),
   subtext: {
-    color: "#666",
+    color: "#718096",
     marginBottom: "24px",
+  },
+  settingsSection: {
+    backgroundColor: "#fff",
+    padding: "20px",
+    borderRadius: "8px",
+    border: "1px solid #e2e8f0",
+    marginBottom: "32px",
+  },
+  form: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "16px",
+    alignItems: "flex-end",
+  },
+  inputGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    flex: "1",
+    minWidth: "200px",
+  },
+  label: {
+    fontSize: "14px",
+    fontWeight: "500",
+    color: "#4a5568",
+  },
+  input: {
+    padding: "8px 12px",
+    borderRadius: "4px",
+    border: "1px solid #cbd5e0",
+    fontSize: "14px",
+  },
+  button: {
+    padding: "10px 20px",
+    backgroundColor: "#3182ce",
+    color: "#fff",
+    border: "none",
+    borderRadius: "4px",
+    fontWeight: "600",
+    cursor: "pointer",
+    fontSize: "14px",
   },
   productList: {
     display: "flex",
@@ -130,24 +258,33 @@ const styles = {
     gap: "12px",
   },
   card: {
-    border: "1px solid #e0e0e0",
+    border: "1px solid #e2e8f0",
     borderRadius: "8px",
     padding: "16px",
     backgroundColor: "#fff",
   },
   productName: {
-    margin: "0 0 8px 0",
+    margin: "0 0 12px 0",
     fontSize: "16px",
+    fontWeight: "600",
+    color: "#2d3748",
+  },
+  variant: {
+    display: "flex",
+    justifyContent: "space-between",
+    padding: "8px 0",
+    fontSize: "14px",
+    borderTop: "1px solid #edf2f7",
+    color: "#4a5568",
   },
   stock: {
     margin: 0,
-    color: "#444",
-    fontSize: "14px",
+    fontWeight: "bold",
   },
   center: {
     textAlign: "center",
     padding: "40px",
-    color: "#666",
+    color: "#718096",
   },
   errorBox: {
     padding: "16px",
