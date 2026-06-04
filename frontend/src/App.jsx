@@ -13,9 +13,10 @@ function App() {
   const [backendStatus, setBackendStatus] = useState("checking");
   
   // Settings state
-  const [alertEmail, setAlertEmail] = useState("");
-  const [globalThreshold, setGlobalThreshold] = useState(5);
+  const [email, setEmail] = useState("");
+  const [threshold, setThreshold] = useState(10);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -60,8 +61,8 @@ function App() {
       setProducts(inventoryRes.data.products || []);
       
       if (settingsRes.data) {
-        setAlertEmail(settingsRes.data.alertEmail || "");
-        setGlobalThreshold(settingsRes.data.globalThreshold ?? 5);
+        setEmail(settingsRes.data.email || "");
+        setThreshold(settingsRes.data.globalThreshold ?? 10);
       }
       
       setLoading(false);
@@ -77,10 +78,11 @@ function App() {
     setSavingSettings(true);
     try {
       await axios.post(`${BACKEND_URL}/settings/${shop}`, {
-        alertEmail,
-        globalThreshold: parseInt(globalThreshold, 10)
+        email,
+        globalThreshold: parseInt(threshold, 10)
       });
-      alert("Settings saved successfully!");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
     } catch (err) {
       console.error("Save Settings Error:", err);
       alert("Failed to save settings.");
@@ -108,8 +110,8 @@ function App() {
               <label style={styles.label}>Notification Email</label>
               <input 
                 type="email" 
-                value={alertEmail} 
-                onChange={(e) => setAlertEmail(e.target.value)}
+                value={email} 
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="email@example.com"
                 style={styles.input}
                 required
@@ -119,15 +121,15 @@ function App() {
               <label style={styles.label}>Global Low Stock Threshold</label>
               <input 
                 type="number" 
-                value={globalThreshold} 
-                onChange={(e) => setGlobalThreshold(e.target.value)}
+                value={threshold} 
+                onChange={(e) => setThreshold(e.target.value)}
                 style={styles.input}
                 min="0"
                 required
               />
             </div>
             <button type="submit" disabled={savingSettings} style={styles.button}>
-              {savingSettings ? "Saving..." : "Save Settings"}
+              {savingSettings ? "Saving..." : saved ? "✅ Saved!" : "Save Settings"}
             </button>
           </form>
         </section>
@@ -154,7 +156,7 @@ function App() {
                     <div key={variant.id} style={styles.variant}>
                       <span>{variant.title} {variant.sku ? `(${variant.sku})` : ""}</span>
                       <span style={{
-                        color: variant.inventory_quantity <= globalThreshold ? '#c53030' : '#2f855a',
+                        color: variant.inventory_quantity <= threshold ? '#c53030' : '#2f855a',
                         fontWeight: 'bold'
                       }}>
                         {variant.inventory_quantity} in stock
@@ -251,6 +253,7 @@ const styles = {
     fontWeight: "600",
     cursor: "pointer",
     fontSize: "14px",
+    minWidth: "120px",
   },
   productList: {
     display: "flex",

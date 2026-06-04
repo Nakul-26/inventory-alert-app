@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const path = require('path');
 const connectDB = require('../lib/db');
 const Shop = require('../models/Shop');
+const AlertSettings = require('../models/AlertSettings');
 
 const app = express();
 app.use(express.json());
@@ -180,32 +181,28 @@ app.get('/inventory/:shop', async (req, res) => {
 
 // Save settings for a shop
 app.post('/settings/:shop', async (req, res) => {
+  const { email, globalThreshold } = req.body;
   try {
-    const { alertEmail, globalThreshold } = req.body;
-    await Shop.findOneAndUpdate(
+    await AlertSettings.findOneAndUpdate(
       { shop: req.params.shop },
-      { alertEmail, globalThreshold },
-      { upsert: true }
+      { shop: req.params.shop, email, globalThreshold, updatedAt: new Date() },
+      { upsert: true, new: true }
     );
-    res.json({ message: 'Settings saved!' });
+    res.json({ success: true });
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error saving settings');
+    res.status(500).json({ error: 'Failed to save settings' });
   }
 });
 
 // Get settings for a shop
 app.get('/settings/:shop', async (req, res) => {
   try {
-    const shopDoc = await Shop.findOne({ shop: req.params.shop });
-    if (!shopDoc) return res.status(404).send('Shop not found');
-    res.json({
-      alertEmail: shopDoc.alertEmail,
-      globalThreshold: shopDoc.globalThreshold
-    });
+    const settings = await AlertSettings.findOne({ shop: req.params.shop });
+    res.json(settings || { email: '', globalThreshold: 10 });
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error fetching settings');
+    res.status(500).json({ error: 'Failed to fetch settings' });
   }
 });
 
