@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
 const path = require('path');
@@ -7,6 +8,7 @@ const connectDB = require('../lib/db');
 const Shop = require('../models/Shop');
 
 const app = express();
+app.use(cors());
 
 const { SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SCOPES, HOST } = process.env;
 
@@ -77,7 +79,7 @@ app.get('/auth/callback', async (req, res) => {
     );
 
     console.log(`✅ Saved token for ${shop}`);
-    res.send(`App installed successfully for ${shop}!`);
+    res.redirect(`http://localhost:5173/?shop=${shop}`);
 
   } catch (err) {
     console.error(err);
