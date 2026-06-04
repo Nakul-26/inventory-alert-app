@@ -15,35 +15,42 @@ function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const shopParam = params.get("shop");
+    setShop(shopParam);
+
+    // Always check backend connection regardless of shop param
+    checkBackendHealth();
 
     if (!shopParam) {
-      setError("No shop found. Please install the app from your Shopify store.");
+      setError("No shop parameter found. This app must be opened from within the Shopify Admin.");
       setLoading(false);
       return;
     }
 
-    setShop(shopParam);
-    checkConnectionAndFetch(shopParam);
+    fetchProducts(shopParam);
   }, []);
 
-  const checkConnectionAndFetch = async (shopName) => {
+  const checkBackendHealth = async () => {
     try {
-      // 1. Check Backend Health
       const statusRes = await axios.get(`${BACKEND_URL}/status`);
       if (statusRes.data.status === "ok") {
         setBackendStatus("connected");
       } else {
         setBackendStatus("error");
       }
+    } catch (err) {
+      console.error("Health Check Error:", err);
+      setBackendStatus("failed");
+    }
+  };
 
-      // 2. Fetch Products
+  const fetchProducts = async (shopName) => {
+    try {
       const res = await axios.get(`${BACKEND_URL}/inventory/${shopName}`);
       setProducts(res.data.products || []);
       setLoading(false);
     } catch (err) {
-      console.error("API Error:", err);
-      setBackendStatus("failed");
-      setError("Communication failed. Please check CORS and Backend URL.");
+      console.error("Fetch Error:", err);
+      setError("Failed to fetch products. Check if the app is correctly installed.");
       setLoading(false);
     }
   };
