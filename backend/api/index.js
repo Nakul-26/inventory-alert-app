@@ -8,7 +8,13 @@ const connectDB = require('../lib/db');
 const Shop = require('../models/Shop');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://inventory-alert-app.pages.dev',
+    'http://localhost:5173'
+  ],
+  credentials: true
+}));
 
 // Fix SameSite cookie issue and CSP for embedded apps
 app.use((req, res, next) => {
