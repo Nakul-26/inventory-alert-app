@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
+// Helper to remove trailing slash
+const cleanUrl = (url) => url?.replace(/\/+$/, "");
+const BACKEND_URL = cleanUrl(import.meta.env.VITE_BACKEND_URL) || "http://localhost:3000";
 
 function App() {
   const [shop, setShop] = useState(null);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [backendStatus, setBackendStatus] = useState("checking");
 
   useEffect(() => {
-    // Get shop from URL params
     const params = new URLSearchParams(window.location.search);
     const shopParam = params.get("shop");
 
@@ -21,38 +23,65 @@ function App() {
     }
 
     setShop(shopParam);
-    fetchProducts(shopParam);
+    checkConnectionAndFetch(shopParam);
   }, []);
 
-  const fetchProducts = async (shopName) => {
+  const checkConnectionAndFetch = async (shopName) => {
     try {
+      // 1. Check Backend Health
+      const statusRes = await axios.get(`${BACKEND_URL}/status`);
+      if (statusRes.data.status === "ok") {
+        setBackendStatus("connected");
+      } else {
+        setBackendStatus("error");
+      }
+
+      // 2. Fetch Products
       const res = await axios.get(`${BACKEND_URL}/inventory/${shopName}`);
-      setProducts(res.data.products);
+      setProducts(res.data.products || []);
       setLoading(false);
     } catch (err) {
-      setError("Failed to fetch products. Please reinstall the app.");
+      console.error("API Error:", err);
+      setBackendStatus("failed");
+      setError("Communication failed. Please check CORS and Backend URL.");
       setLoading(false);
     }
   };
 
-  if (loading) return <div style={styles.center}>Loading your inventory...</div>;
-  if (error) return <div style={styles.center}>{error}</div>;
-
   return (
     <div style={styles.container}>
-      <h1 style={styles.heading}>Inventory Alerts</h1>
-      <p style={styles.subtext}>Store: {shop}</p>
+      <header style={styles.header}>
+        <h1 style={styles.heading}>Inventory Alerts</h1>
+        <div style={styles.statusBadge(backendStatus)}>
+          Backend: {backendStatus.toUpperCase()}
+        </div>
+      </header>
+      
+      <p style={styles.subtext}>Store: {shop || "Detecting..."}</p>
 
-      <div style={styles.productList}>
-        {products.map((product) => (
-          <div key={product.id} style={styles.card}>
-            <h3 style={styles.productName}>{product.title}</h3>
-            <p style={styles.stock}>
-              Variants: {product.variants.length}
-            </p>
-          </div>
-        ))}
-      </div>
+      {loading ? (
+        <div style={styles.center}>Loading your inventory...</div>
+      ) : error ? (
+        <div style={styles.errorBox}>
+          <p>{error}</p>
+          <p style={{fontSize: '12px'}}>URL: {BACKEND_URL}/inventory/{shop}</p>
+        </div>
+      ) : (
+        <div style={styles.productList}>
+          {products.length === 0 ? (
+            <p>No products found or check your Shopify permissions.</p>
+          ) : (
+            products.map((product) => (
+              <div key={product.id} style={styles.card}>
+                <h3 style={styles.productName}>{product.title}</h3>
+                <p style={styles.stock}>
+                  Variants: {product.variants.length}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -64,11 +93,26 @@ const styles = {
     padding: "32px 16px",
     fontFamily: "sans-serif",
   },
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "8px",
+  },
   heading: {
     fontSize: "28px",
     fontWeight: "bold",
-    marginBottom: "4px",
+    margin: 0,
   },
+  statusBadge: (status) => ({
+    padding: "4px 8px",
+    borderRadius: "4px",
+    fontSize: "12px",
+    fontWeight: "bold",
+    backgroundColor: status === "connected" ? "#e6fffa" : "#fff5f5",
+    color: status === "connected" ? "#2c7a7b" : "#c53030",
+    border: `1px solid ${status === "connected" ? "#81e6d9" : "#feb2b2"}`,
+  }),
   subtext: {
     color: "#666",
     marginBottom: "24px",
@@ -94,11 +138,16 @@ const styles = {
     fontSize: "14px",
   },
   center: {
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    height: "100vh",
-    fontFamily: "sans-serif",
+    textAlign: "center",
+    padding: "40px",
+    color: "#666",
+  },
+  errorBox: {
+    padding: "16px",
+    backgroundColor: "#fff5f5",
+    border: "1px solid #feb2b2",
+    borderRadius: "8px",
+    color: "#c53030",
   }
 };
 

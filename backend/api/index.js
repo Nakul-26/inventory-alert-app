@@ -56,6 +56,11 @@ app.get('/', async (req, res) => {
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+// Health check endpoint
+app.get('/status', (req, res) => {
+  res.json({ status: 'ok', message: 'Backend is reachable' });
+});
+
 // Step 1: Redirect to Shopify login
 app.get('/auth', (req, res) => {
   const { shop, host } = req.query;
