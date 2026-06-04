@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 
-const BACKEND_URL = "https://inventory-alert-app-two.vercel.app";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
 
 function App() {
   const [shop, setShop] = useState(null);

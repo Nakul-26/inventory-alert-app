@@ -79,7 +79,8 @@ app.get('/auth/callback', async (req, res) => {
     );
 
     console.log(`✅ Saved token for ${shop}`);
-    res.redirect(`http://localhost:5173/?shop=${shop}`);
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    res.redirect(`${frontendUrl}/?shop=${shop}`);
 
   } catch (err) {
     console.error(err);
