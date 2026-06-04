@@ -30,32 +30,62 @@ app.use(async (req, res, next) => {
 });
 
 // Root route
-app.get('/', (req, res) => {
-  const shop = req.query.shop;
-  if (shop) return res.redirect(`/auth?shop=${shop}`);
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+app.get('/', async (req, res) => {
+  const { shop, host } = req.query;
+  if (shop) {
+    try {
+      const shopDoc = await Shop.findOne({ shop });
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+      if (shopDoc) {
+        return res.redirect(`${frontendUrl}/?shop=${shop}&host=${host}`);
+      }
+      return res.redirect(`/auth?shop=${shop}&host=${host}`);
+    } catch (err) {
+      console.error('Error checking shop:', err);
+      return res.status(500).send('Internal Server Error');
+    }
+  }
+  res.send('App is running!');
 });
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // Step 1: Redirect to Shopify login
 app.get('/auth', (req, res) => {
-  const shop = req.query.shop;
+  const { shop, host } = req.query;
   if (!shop) return res.status(400).send('Missing shop parameter');
 
   const redirectUri = `${HOST}/auth/callback`;
   const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SCOPES}&redirect_uri=${redirectUri}`;
 
-  // Break out of iframe first, then redirect
+  // Use App Bridge to redirect
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
+      <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
       <script>
-        window.top.location.href = "${installUrl}";
+        document.addEventListener('DOMContentLoaded', function() {
+          const AppBridge = window['app-bridge'];
+          const createApp = AppBridge.default;
+          const Redirect = AppBridge.actions.Redirect;
+
+          const host = "${host}";
+
+          const app = createApp({
+            apiKey: '${SHOPIFY_API_KEY}',
+            host: host,
+          });
+
+          const redirect = Redirect.create(app);
+          redirect.dispatch(
+            Redirect.Action.REMOTE,
+            '${installUrl}'
+          );
+        });
       </script>
     </head>
-    <body>Redirecting...</body>
+    <body>Redirecting to install...</body>
     </html>
   `);
 });
@@ -97,7 +127,7 @@ app.get('/auth/callback', async (req, res) => {
 
     console.log(`✅ Saved token for ${shop}`);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    res.redirect(`${frontendUrl}/?shop=${shop}`);
+    res.redirect(`${frontendUrl}/?shop=${shop}&host=${req.query.host}`);
 
   } catch (err) {
     console.error(err);
