@@ -10,6 +10,12 @@ const Shop = require('../models/Shop');
 const app = express();
 app.use(cors());
 
+// Fix SameSite cookie issue and CSP for embedded apps
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', "frame-ancestors https://admin.shopify.com https://*.myshopify.com");
+  next();
+});
+
 const { SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SCOPES, HOST } = process.env;
 
 // Middleware to ensure DB is connected
@@ -40,7 +46,18 @@ app.get('/auth', (req, res) => {
   const redirectUri = `${HOST}/auth/callback`;
   const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}&scope=${SCOPES}&redirect_uri=${redirectUri}`;
 
-  res.redirect(installUrl);
+  // Break out of iframe first, then redirect
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <script>
+        window.top.location.href = "${installUrl}";
+      </script>
+    </head>
+    <body>Redirecting...</body>
+    </html>
+  `);
 });
 
 // Step 2: Handle callback and save token
