@@ -11,6 +11,31 @@ const { Resend } = require('resend');
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+// Helper to fetch data from Shopify and handle 401s
+const fetchShopifyData = async (shopDoc, url, res) => {
+  try {
+    const response = await axios.get(url, {
+      headers: { 'X-Shopify-Access-Token': shopDoc.accessToken }
+    });
+    return response;
+  } catch (err) {
+    if (err.response?.status === 401) {
+      // Token is invalid - delete it and force reinstall
+      await Shop.deleteOne({ shop: shopDoc.shop });
+      console.log(`🔴 Invalid token for ${shopDoc.shop} - deleted, needs reinstall`);
+      
+      if (res) {
+        res.status(401).json({ 
+          error: 'App needs to be reinstalled',
+          reinstallUrl: `${HOST}/auth?shop=${shopDoc.shop}`
+        });
+      }
+      return null;
+    }
+    throw err;
+  }
+};
+
 // Helper to verify Shopify Webhooks
 const verifyWebhook = (req) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
@@ -189,15 +214,21 @@ app.get('/inventory/:shop', async (req, res) => {
     
     if (!shopDoc) {
       console.warn(`⚠️ Shop not found in DB: ${shop}`);
-      return res.status(404).json({ error: 'Shop not found in database. Please re-install.' });
+      return res.status(401).json({ 
+        error: 'App needs to be reinstalled',
+        reinstallUrl: `${HOST}/auth?shop=${shop}`
+      });
     }
 
     console.log('✅ Shop found, fetching from Shopify API...');
 
-    const response = await axios.get(
+    const response = await fetchShopifyData(
+      shopDoc,
       `https://${shopDoc.shop}/admin/api/2026-04/products.json?limit=50`,
-      { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
+      res
     );
+
+    if (!response) return; // 401 already handled
 
     const products = (response.data.products || []).map(product => ({
       id: product.id,
@@ -214,11 +245,7 @@ app.get('/inventory/:shop', async (req, res) => {
     res.json({ products });
   } catch (err) {
     console.error(`❌ Inventory Fetch Error for ${shop}:`, err.message);
-    res.status(500).json({ 
-      error: err.message,
-      details: err.response?.data || 'No additional details',
-      stack: err.stack
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 

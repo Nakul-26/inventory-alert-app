@@ -68,6 +68,13 @@ function App() {
       setLoading(false);
     } catch (err) {
       console.error("Data Fetch Error:", err);
+      
+      if (err.response?.status === 401 && err.response.data.reinstallUrl) {
+        // Redirect the top-level window to the reinstall URL
+        window.top.location.href = err.response.data.reinstallUrl;
+        return;
+      }
+
       setError("Failed to fetch data. Check if the app is correctly installed.");
       setLoading(false);
     }
