@@ -7,6 +7,9 @@ const path = require('path');
 const connectDB = require('../lib/db');
 const Shop = require('../models/Shop');
 const AlertSettings = require('../models/AlertSettings');
+const { Resend } = require('resend');
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const app = express();
 app.use(express.json());
@@ -203,6 +206,74 @@ app.get('/settings/:shop', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+// Test alert route
+app.get('/test-alert/:shop', async (req, res) => {
+  try {
+    const settings = await AlertSettings.findOne({ shop: req.params.shop });
+    if (!settings || !settings.email) {
+      return res.status(400).send('No alert settings found. Save your email first in the app.');
+    }
+
+    await resend.emails.send({
+      from: 'onboarding@resend.dev',
+      to: settings.email,
+      subject: `⚠️ Test Low Stock Alert for ${req.params.shop}`,
+      html: `
+        <h2>Test Alert ✅</h2>
+        <p>This is a test alert for <strong>${req.params.shop}</strong>.</p>
+        <p>Your inventory alerts are working correctly!</p>
+      `
+    });
+
+    res.send('✅ Test email sent! Check your inbox.');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Failed to send test email: ' + err.message);
+  }
+});
+
+// Shopify Webhook for low stock (Placeholder)
+app.post('/webhooks/inventory-update', async (req, res) => {
+  // This is a placeholder for where the low stock alert logic would go.
+  // Usually triggered by orders/paid or inventory_levels/update webhooks.
+  const { shop, lowStockItems } = req.body; // Assuming the body contains these
+  
+  try {
+    const settings = await AlertSettings.findOne({ shop });
+    if (settings && settings.email && lowStockItems && lowStockItems.length > 0) {
+      await resend.emails.send({
+        from: 'onboarding@resend.dev',
+        to: settings.email,
+        subject: `⚠️ Low Stock Alert for ${shop}`,
+        html: `
+          <h2>Low Stock Warning</h2>
+          <p>The following items in your store <strong>${shop}</strong> are running low:</p>
+          <table border="1" cellpadding="8" cellspacing="0">
+            <tr>
+              <th>Product</th>
+              <th>Variant</th>
+              <th>Stock Remaining</th>
+            </tr>
+            ${lowStockItems.map(item => `
+              <tr>
+                <td>${item.product}</td>
+                <td>${item.variant || 'Default'}</td>
+                <td style="color:red; font-weight:bold;">${item.stock}</td>
+              </tr>
+            `).join('')}
+          </table>
+          <p>Log in to your Shopify store to restock these items.</p>
+        `
+      });
+      console.log(`📧 Alert email sent to ${settings.email}`);
+    }
+    res.status(200).send('Webhook processed');
+  } catch (err) {
+    console.error('Error processing webhook:', err);
+    res.status(500).send('Internal Server Error');
   }
 });
 
