@@ -315,39 +315,42 @@ app.get('/test-alert/:shop', async (req, res) => {
 // Shopify Webhook for low stock
 app.post('/webhooks/inventory-update', async (req, res) => {
   const shop = req.headers['x-shopify-shop-domain'];
-  console.log(`📡 Incoming webhook from ${shop}`);
   
   if (!verifyWebhook(req)) {
-    console.error('⚠️ Webhook verification failed');
     return res.status(401).send('Unauthorized');
   }
 
   const { inventory_item_id, available } = req.body;
-  console.log(`📦 Item ID: ${inventory_item_id}, New Stock: ${available}`);
 
   try {
     const settings = await AlertSettings.findOne({ shop });
-    if (!settings || !settings.email) {
-      console.log('ℹ️ No settings found for this shop');
-      return res.status(200).send('No settings found');
-    }
-
-    console.log(`🎯 Threshold: ${settings.globalThreshold}, Stock: ${available}`);
+    if (!settings || !settings.email) return res.status(200).send('No settings found');
 
     if (available <= settings.globalThreshold) {
       const shopDoc = await Shop.findOne({ shop });
-      if (!shopDoc) {
-        console.error('❌ Shop doc missing during webhook');
-        return res.status(200).send('Shop not found');
-      }
+      if (!shopDoc) return res.status(200).send('Shop not found');
 
-      // Fetch variant details to get product name
-      const productRes = await axios.get(
-        `https://${shop}/admin/api/2026-04/inventory_items/${inventory_item_id}.json`,
+      // Fetch product and variant titles
+      const productsRes = await axios.get(
+        `https://${shop}/admin/api/2026-04/products.json?limit=250`,
         { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
       );
-      
-      const sku = productRes.data.inventory_item.sku;
+
+      let productTitle = 'Unknown Product';
+      let variantTitle = '';
+      let sku = 'N/A';
+
+      // Find the matching variant
+      productsRes.data.products.some(p => {
+        const variant = p.variants.find(v => v.inventory_item_id === inventory_item_id);
+        if (variant) {
+          productTitle = p.title;
+          variantTitle = variant.title === 'Default Title' ? '' : ` - ${variant.title}`;
+          sku = variant.sku || 'N/A';
+          return true;
+        }
+        return false;
+      });
 
       // Send email
       await resend.emails.send({
@@ -356,37 +359,22 @@ app.post('/webhooks/inventory-update', async (req, res) => {
         subject: `⚠️ Low Stock Alert for ${shop}`,
         html: `
           <h2>Low Stock Warning</h2>
-          <p>An item in your store <strong>${shop}</strong> is running low:</p>
-          <p><strong>SKU:</strong> ${sku || 'N/A'}</p>
-          <p><strong>Stock Remaining:</strong> <span style="color:red; font-weight:bold;">${available}</span></p>
-          <p>Log in to your Shopify store to restock.</p>
+          <p>The following item in your store <strong>${shop}</strong> is running low:</p>
+          <div style="padding: 16px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #f7fafc;">
+            <p style="margin: 0; font-size: 18px; font-weight: bold;">${productTitle}${variantTitle}</p>
+            <p style="margin: 8px 0 0 0; color: #4a5568;">SKU: ${sku}</p>
+            <p style="margin: 8px 0 0 0; font-size: 20px; color: #c53030; font-weight: bold;">${available} remaining</p>
+          </div>
+          <p style="margin-top: 24px;">Log in to your Shopify store to restock.</p>
         `
       });
-      console.log(`📧 Low stock alert sent to ${settings.email} for SKU: ${sku}`);
-    } else {
-      console.log('✅ Stock is still above threshold');
+      console.log(`📧 Low stock alert sent to ${settings.email} for ${productTitle}`);
     }
 
     res.status(200).send('Webhook processed');
   } catch (err) {
     console.error('Error processing webhook:', err.response?.data || err.message);
     res.status(500).send('Internal Server Error');
-  }
-});
-
-// Debug: List webhooks for a shop
-app.get('/debug/webhooks/:shop', async (req, res) => {
-  try {
-    const shopDoc = await Shop.findOne({ shop: req.params.shop });
-    if (!shopDoc) return res.status(404).send('Shop not found');
-
-    const response = await axios.get(
-      `https://${shopDoc.shop}/admin/api/2026-04/webhooks.json`,
-      { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
-    );
-    res.json(response.data);
-  } catch (err) {
-    res.status(500).json(err.response?.data || err.message);
   }
 });
 
