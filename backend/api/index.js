@@ -182,17 +182,24 @@ app.get('/auth/callback', async (req, res) => {
 
 // Fetch inventory for a shop
 app.get('/inventory/:shop', async (req, res) => {
+  const { shop } = req.params;
   try {
-    const shopDoc = await Shop.findOne({ shop: req.params.shop });
-    if (!shopDoc) return res.status(404).send('Shop not found');
+    console.log('🔍 Fetching inventory for:', shop);
+    const shopDoc = await Shop.findOne({ shop });
+    
+    if (!shopDoc) {
+      console.warn(`⚠️ Shop not found in DB: ${shop}`);
+      return res.status(404).json({ error: 'Shop not found in database. Please re-install.' });
+    }
+
+    console.log('✅ Shop found, fetching from Shopify API...');
 
     const response = await axios.get(
       `https://${shopDoc.shop}/admin/api/2026-04/products.json?limit=50`,
       { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
     );
 
-    // For each product, get inventory for each variant
-    const products = response.data.products.map(product => ({
+    const products = (response.data.products || []).map(product => ({
       id: product.id,
       title: product.title,
       variants: product.variants.map(variant => ({
@@ -206,8 +213,12 @@ app.get('/inventory/:shop', async (req, res) => {
 
     res.json({ products });
   } catch (err) {
-    console.error(err);
-    res.status(500).send('Error fetching inventory');
+    console.error(`❌ Inventory Fetch Error for ${shop}:`, err.message);
+    res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data || 'No additional details',
+      stack: err.stack
+    });
   }
 });
 
