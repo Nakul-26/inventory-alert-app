@@ -11,6 +11,17 @@ const { Resend } = require('resend');
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+// Helper to verify Shopify Webhooks
+const verifyWebhook = (req) => {
+  const hmac = req.headers['x-shopify-hmac-sha256'];
+  const body = JSON.stringify(req.body);
+  const hash = crypto
+    .createHmac('sha256', SHOPIFY_API_SECRET)
+    .update(body, 'utf8')
+    .digest('base64');
+  return hash === hmac;
+};
+
 const app = express();
 app.use(express.json());
 app.use(cors({
@@ -141,6 +152,24 @@ app.get('/auth/callback', async (req, res) => {
       { upsert: true, new: true }
     );
 
+    // Register Webhook (Inventory Update)
+    try {
+      await axios.post(
+        `https://${shop}/admin/api/2026-04/webhooks.json`,
+        {
+          webhook: {
+            topic: 'inventory_levels/update',
+            address: `${HOST}/webhooks/inventory-update`,
+            format: 'json',
+          },
+        },
+        { headers: { 'X-Shopify-Access-Token': accessToken } }
+      );
+      console.log(`📡 Registered inventory webhook for ${shop}`);
+    } catch (webhookErr) {
+      console.error(`❌ Failed to register webhook for ${shop}:`, webhookErr.response?.data || webhookErr.message);
+    }
+
     console.log(`✅ Saved token for ${shop}`);
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     res.redirect(`${frontendUrl}/?shop=${shop}&host=${req.query.host}`);
@@ -235,44 +264,52 @@ app.get('/test-alert/:shop', async (req, res) => {
   }
 });
 
-// Shopify Webhook for low stock (Placeholder)
+// Shopify Webhook for low stock
 app.post('/webhooks/inventory-update', async (req, res) => {
-  // This is a placeholder for where the low stock alert logic would go.
-  // Usually triggered by orders/paid or inventory_levels/update webhooks.
-  const { shop, lowStockItems } = req.body; // Assuming the body contains these
+  const shop = req.headers['x-shopify-shop-domain'];
   
+  if (!verifyWebhook(req)) {
+    console.error('⚠️ Webhook verification failed');
+    return res.status(401).send('Unauthorized');
+  }
+
+  const { inventory_item_id, available } = req.body;
+
   try {
     const settings = await AlertSettings.findOne({ shop });
-    if (settings && settings.email && lowStockItems && lowStockItems.length > 0) {
+    if (!settings || !settings.email) return res.status(200).send('No settings found');
+
+    if (available <= settings.globalThreshold) {
+      const shopDoc = await Shop.findOne({ shop });
+      if (!shopDoc) return res.status(200).send('Shop not found');
+
+      // Fetch variant details to get product name
+      const productRes = await axios.get(
+        `https://${shop}/admin/api/2026-04/inventory_items/${inventory_item_id}.json`,
+        { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
+      );
+      
+      const sku = productRes.data.inventory_item.sku;
+
+      // Send email
       await resend.emails.send({
         from: 'onboarding@resend.dev',
         to: settings.email,
         subject: `⚠️ Low Stock Alert for ${shop}`,
         html: `
           <h2>Low Stock Warning</h2>
-          <p>The following items in your store <strong>${shop}</strong> are running low:</p>
-          <table border="1" cellpadding="8" cellspacing="0">
-            <tr>
-              <th>Product</th>
-              <th>Variant</th>
-              <th>Stock Remaining</th>
-            </tr>
-            ${lowStockItems.map(item => `
-              <tr>
-                <td>${item.product}</td>
-                <td>${item.variant || 'Default'}</td>
-                <td style="color:red; font-weight:bold;">${item.stock}</td>
-              </tr>
-            `).join('')}
-          </table>
-          <p>Log in to your Shopify store to restock these items.</p>
+          <p>An item in your store <strong>${shop}</strong> is running low:</p>
+          <p><strong>SKU:</strong> ${sku || 'N/A'}</p>
+          <p><strong>Stock Remaining:</strong> <span style="color:red; font-weight:bold;">${available}</span></p>
+          <p>Log in to your Shopify store to restock.</p>
         `
       });
-      console.log(`📧 Alert email sent to ${settings.email}`);
+      console.log(`📧 Low stock alert sent to ${settings.email} for SKU: ${sku}`);
     }
+
     res.status(200).send('Webhook processed');
   } catch (err) {
-    console.error('Error processing webhook:', err);
+    console.error('Error processing webhook:', err.response?.data || err.message);
     res.status(500).send('Internal Server Error');
   }
 });
