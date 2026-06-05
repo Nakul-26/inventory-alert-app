@@ -39,9 +39,8 @@ const fetchShopifyData = async (shopDoc, url, res) => {
 // Helper to verify Shopify Webhooks
 const verifyWebhook = (req) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
-  // In some environments, JSON.stringify(req.body) might differ slightly from raw body.
-  // For now, let's log the comparison to debug.
-  const body = JSON.stringify(req.body);
+  // Use rawBody for verification if available, otherwise fallback to stringified body
+  const body = req.rawBody ? req.rawBody : JSON.stringify(req.body);
   const hash = crypto
     .createHmac('sha256', SHOPIFY_API_SECRET)
     .update(body, 'utf8')
@@ -50,13 +49,16 @@ const verifyWebhook = (req) => {
   console.log('--- Webhook Verification ---');
   console.log('Received HMAC:', hmac);
   console.log('Calculated Hash:', hash);
-  console.log('Body snippet:', body.substring(0, 100));
   
   return hash === hmac;
 };
 
 const app = express();
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use(cors({
   origin: [
     'https://inventory-alert-app.pages.dev',
