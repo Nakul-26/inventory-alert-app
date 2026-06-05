@@ -39,11 +39,19 @@ const fetchShopifyData = async (shopDoc, url, res) => {
 // Helper to verify Shopify Webhooks
 const verifyWebhook = (req) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
+  // In some environments, JSON.stringify(req.body) might differ slightly from raw body.
+  // For now, let's log the comparison to debug.
   const body = JSON.stringify(req.body);
   const hash = crypto
     .createHmac('sha256', SHOPIFY_API_SECRET)
     .update(body, 'utf8')
     .digest('base64');
+  
+  console.log('--- Webhook Verification ---');
+  console.log('Received HMAC:', hmac);
+  console.log('Calculated Hash:', hash);
+  console.log('Body snippet:', body.substring(0, 100));
+  
   return hash === hmac;
 };
 
@@ -305,6 +313,7 @@ app.get('/test-alert/:shop', async (req, res) => {
 // Shopify Webhook for low stock
 app.post('/webhooks/inventory-update', async (req, res) => {
   const shop = req.headers['x-shopify-shop-domain'];
+  console.log(`📡 Incoming webhook from ${shop}`);
   
   if (!verifyWebhook(req)) {
     console.error('⚠️ Webhook verification failed');
@@ -312,14 +321,23 @@ app.post('/webhooks/inventory-update', async (req, res) => {
   }
 
   const { inventory_item_id, available } = req.body;
+  console.log(`📦 Item ID: ${inventory_item_id}, New Stock: ${available}`);
 
   try {
     const settings = await AlertSettings.findOne({ shop });
-    if (!settings || !settings.email) return res.status(200).send('No settings found');
+    if (!settings || !settings.email) {
+      console.log('ℹ️ No settings found for this shop');
+      return res.status(200).send('No settings found');
+    }
+
+    console.log(`🎯 Threshold: ${settings.globalThreshold}, Stock: ${available}`);
 
     if (available <= settings.globalThreshold) {
       const shopDoc = await Shop.findOne({ shop });
-      if (!shopDoc) return res.status(200).send('Shop not found');
+      if (!shopDoc) {
+        console.error('❌ Shop doc missing during webhook');
+        return res.status(200).send('Shop not found');
+      }
 
       // Fetch variant details to get product name
       const productRes = await axios.get(
@@ -343,12 +361,30 @@ app.post('/webhooks/inventory-update', async (req, res) => {
         `
       });
       console.log(`📧 Low stock alert sent to ${settings.email} for SKU: ${sku}`);
+    } else {
+      console.log('✅ Stock is still above threshold');
     }
 
     res.status(200).send('Webhook processed');
   } catch (err) {
     console.error('Error processing webhook:', err.response?.data || err.message);
     res.status(500).send('Internal Server Error');
+  }
+});
+
+// Debug: List webhooks for a shop
+app.get('/debug/webhooks/:shop', async (req, res) => {
+  try {
+    const shopDoc = await Shop.findOne({ shop: req.params.shop });
+    if (!shopDoc) return res.status(404).send('Shop not found');
+
+    const response = await axios.get(
+      `https://${shopDoc.shop}/admin/api/2026-04/webhooks.json`,
+      { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
+    );
+    res.json(response.data);
+  } catch (err) {
+    res.status(500).json(err.response?.data || err.message);
   }
 });
 
