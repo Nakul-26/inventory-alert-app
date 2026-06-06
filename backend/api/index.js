@@ -100,7 +100,7 @@ app.get('/', async (req, res) => {
       return res.redirect(`/auth?shop=${shop}&host=${host}`);
     } catch (err) {
       console.error('Error checking shop:', err);
-      return res.status(500).send('Internal Server Error');
+      return res.status(500).send(`Internal Server Error: ${err.message}`);
     }
   }
   res.send('App is running!');
