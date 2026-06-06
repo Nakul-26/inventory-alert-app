@@ -61,7 +61,7 @@ function PrivacyPolicy() {
 
       <section style={styles.section}>
         <h2 style={styles.subheading}>8. Contact</h2>
-        <p>For any privacy related questions, contact us at: <a href="mailto:your@gmail.com">your@gmail.com</a></p>
+        <p>For any privacy related questions, contact us at: <a href="mailto:nakul123426@gmail.com">nakul123426@gmail.com</a></p>
       </section>
     </div>
   );

@@ -23,16 +23,17 @@ function App() {
     const shopParam = params.get("shop");
     setShop(shopParam);
 
-    // Always check backend connection regardless of shop param
-    checkBackendHealth();
-
     if (!shopParam) {
       setError("No shop parameter found. This app must be opened from within the Shopify Admin.");
       setLoading(false);
       return;
     }
 
-    fetchInitialData(shopParam);
+    // Run health check and data fetch in parallel
+    Promise.all([
+      checkBackendHealth(),
+      fetchInitialData(shopParam)
+    ]);
   }, []);
 
   const checkBackendHealth = async () => {

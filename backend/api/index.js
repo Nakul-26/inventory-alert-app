@@ -75,16 +75,16 @@ app.use((req, res, next) => {
 
 const { SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SCOPES, HOST } = process.env;
 
-// Middleware to ensure DB is connected
-app.use(async (req, res, next) => {
-  try {
-    await connectDB();
-    next();
-  } catch (err) {
-    console.error('Database connection error:', err);
-    res.status(500).send('Internal Server Error');
-  }
-});
+// Middleware to ensure DB is connected (Remove this or use once)
+// app.use(async (req, res, next) => {
+//   try {
+//     await connectDB();
+//     next();
+//   } catch (err) {
+//     console.error('Database connection error:', err);
+//     res.status(500).send('Internal Server Error');
+//   }
+// });
 
 // Root route
 app.get('/', async (req, res) => {
@@ -230,25 +230,65 @@ app.get('/inventory/:shop', async (req, res) => {
       });
     }
 
-    console.log('✅ Shop found, fetching from Shopify API...');
+    console.log('✅ Shop found, fetching from Shopify GraphQL API...');
 
-    const response = await fetchShopifyData(
-      shopDoc,
-      `https://${shopDoc.shop}/admin/api/2026-04/products.json?limit=50`,
-      res
-    );
+    // Use GraphQL for faster, more efficient fetching
+    const graphqlQuery = {
+      query: `
+        {
+          products(first: 50) {
+            nodes {
+              id
+              title
+              variants(first: 20) {
+                nodes {
+                  id
+                  title
+                  sku
+                  inventoryQuantity
+                  inventoryItem {
+                    id
+                  }
+                }
+              }
+            }
+          }
+        }
+      `
+    };
 
-    if (!response) return; // 401 already handled
+    const response = await axios.post(
+      `https://${shopDoc.shop}/admin/api/2026-04/graphql.json`,
+      graphqlQuery,
+      {
+        headers: {
+          'X-Shopify-Access-Token': shopDoc.accessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    ).catch(async err => {
+      if (err.response?.status === 401) {
+        await Shop.deleteOne({ shop: shopDoc.shop });
+        res.status(401).json({ 
+          error: 'App needs to be reinstalled',
+          reinstallUrl: `${HOST}/auth?shop=${shopDoc.shop}`
+        });
+        return null;
+      }
+      throw err;
+    });
 
-    const products = (response.data.products || []).map(product => ({
+    if (!response) return;
+
+    const products = response.data.data.products.nodes.map(product => ({
       id: product.id,
       title: product.title,
-      variants: product.variants.map(variant => ({
+      variants: product.variants.nodes.map(variant => ({
         id: variant.id,
         title: variant.title,
         sku: variant.sku,
-        inventory_quantity: variant.inventory_quantity,
-        inventory_item_id: variant.inventory_item_id
+        inventory_quantity: variant.inventoryQuantity,
+        inventory_item_id: variant.inventoryItem.id
       }))
     }));
 
@@ -381,8 +421,12 @@ app.post('/webhooks/inventory-update', async (req, res) => {
 // Only start the server if this file is run directly
 if (require.main === module) {
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  connectDB().then(() => {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  }).catch(err => {
+    console.error('Failed to connect to DB on startup:', err);
   });
 }
 
