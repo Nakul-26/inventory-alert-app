@@ -6,10 +6,19 @@ const cleanUrl = (url) => url?.replace(/\/+$/, "");
 const BACKEND_URL = cleanUrl(import.meta.env.VITE_BACKEND_URL) || "http://localhost:3000";
 
 function App() {
-  const [shop, setShop] = useState(null);
+  const [shop] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("shop");
+  });
   const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return !!params.get("shop");
+  });
+  const [error, setError] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("shop") ? null : "No shop parameter found. This app must be opened from within the Shopify Admin.";
+  });
   const [backendStatus, setBackendStatus] = useState("checking");
   
   // Settings state
@@ -17,24 +26,10 @@ function App() {
   const [threshold, setThreshold] = useState(10);
   const [savingSettings, setSavingSettings] = useState(false);
   const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const shopParam = params.get("shop");
-    setShop(shopParam);
-
-    if (!shopParam) {
-      setError("No shop parameter found. This app must be opened from within the Shopify Admin.");
-      setLoading(false);
-      return;
-    }
-
-    // Run health check and data fetch in parallel
-    Promise.all([
-      checkBackendHealth(),
-      fetchInitialData(shopParam)
-    ]);
-  }, []);
+  
+  // Per-product threshold state
+  const [thresholds, setThresholds] = useState({});
+  const [savingThreshold, setSavingThreshold] = useState(null);
 
   const checkBackendHealth = async () => {
     try {
@@ -50,13 +45,29 @@ function App() {
     }
   };
 
-  const fetchInitialData = async (shopName) => {
-    setLoading(true);
+  const saveThreshold = async (variantId, value) => {
+    setSavingThreshold(variantId);
     try {
-      // Fetch products and settings in parallel
-      const [inventoryRes, settingsRes] = await Promise.all([
+      await axios.post(`${BACKEND_URL}/threshold/${shop}`, {
+        variantId: String(variantId),
+        threshold: Number(value)
+      });
+      setThresholds(prev => ({ ...prev, [variantId]: Number(value) }));
+    } catch (err) {
+      console.error('Failed to save threshold', err);
+      alert("Failed to save product-specific threshold.");
+    } finally {
+      setSavingThreshold(null);
+    }
+  };
+
+  const fetchInitialData = async (shopName) => {
+    try {
+      // Fetch products, settings, and product-specific thresholds in parallel
+      const [inventoryRes, settingsRes, thresholdsRes] = await Promise.all([
         axios.get(`${BACKEND_URL}/inventory/${shopName}`),
-        axios.get(`${BACKEND_URL}/settings/${shopName}`).catch(() => ({ data: {} }))
+        axios.get(`${BACKEND_URL}/settings/${shopName}`).catch(() => ({ data: {} })),
+        axios.get(`${BACKEND_URL}/threshold/${shopName}`).catch(() => ({ data: {} }))
       ]);
 
       setProducts(inventoryRes.data.products || []);
@@ -65,6 +76,8 @@ function App() {
         setEmail(settingsRes.data.email || "");
         setThreshold(settingsRes.data.globalThreshold ?? 10);
       }
+
+      setThresholds(thresholdsRes.data || {});
       
       setLoading(false);
     } catch (err) {
@@ -80,6 +93,18 @@ function App() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!shop) return;
+
+    // Use setTimeout to avoid synchronous state updates in effect
+    const timer = setTimeout(() => {
+      checkBackendHealth();
+      fetchInitialData(shop);
+    }, 0);
+    
+    return () => clearTimeout(timer);
+  }, [shop]);
 
   const handleSaveSettings = async (e) => {
     e.preventDefault();
@@ -160,17 +185,45 @@ function App() {
               products.map((product) => (
                 <div key={product.id} style={styles.card}>
                   <h3 style={styles.productName}>{product.title}</h3>
-                  {product.variants.map((variant) => (
-                    <div key={variant.id} style={styles.variant}>
-                      <span>{variant.title} {variant.sku ? `(${variant.sku})` : ""}</span>
-                      <span style={{
-                        color: variant.inventory_quantity <= threshold ? '#c53030' : '#2f855a',
-                        fontWeight: 'bold'
-                      }}>
-                        {variant.inventory_quantity} in stock
-                      </span>
-                    </div>
-                  ))}
+                  {product.variants.map((variant) => {
+                    const variantThreshold = thresholds[variant.id] ?? threshold;
+                    const isLow = variant.inventory_quantity <= variantThreshold;
+                    
+                    return (
+                      <div key={variant.id} style={styles.variant}>
+                        <div style={styles.variantInfo}>
+                          <span style={{ color: isLow ? '#c53030' : '#4a5568' }}>
+                            {variant.title} {variant.sku ? `(${variant.sku})` : ""}
+                          </span>
+                          <span style={{
+                            color: isLow ? '#c53030' : '#2f855a',
+                            fontWeight: 'bold',
+                            marginLeft: '8px'
+                          }}>
+                            {variant.inventory_quantity} in stock {isLow && "⚠️"}
+                          </span>
+                        </div>
+                        
+                        <div style={styles.thresholdContainer}>
+                          <label style={styles.miniLabel}>Threshold:</label>
+                          <input 
+                            type="number"
+                            defaultValue={thresholds[variant.id] ?? ""}
+                            placeholder={threshold}
+                            onBlur={(e) => {
+                              if (e.target.value !== "") {
+                                saveThreshold(variant.id, e.target.value);
+                              }
+                            }}
+                            style={styles.miniInput}
+                          />
+                          {savingThreshold === variant.id && (
+                            <span style={styles.savingText}>Saving...</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ))
             )}
@@ -283,10 +336,39 @@ const styles = {
   variant: {
     display: "flex",
     justifyContent: "space-between",
-    padding: "8px 0",
+    alignItems: "center",
+    padding: "12px 0",
     fontSize: "14px",
     borderTop: "1px solid #edf2f7",
     color: "#4a5568",
+    flexWrap: "wrap",
+    gap: "8px",
+  },
+  variantInfo: {
+    display: "flex",
+    alignItems: "center",
+    flex: "1",
+    minWidth: "200px",
+  },
+  thresholdContainer: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  miniLabel: {
+    fontSize: "12px",
+    color: "#718096",
+  },
+  miniInput: {
+    width: "60px",
+    padding: "4px 8px",
+    borderRadius: "4px",
+    border: "1px solid #cbd5e0",
+    fontSize: "13px",
+  },
+  savingText: {
+    fontSize: "11px",
+    color: "#3182ce",
   },
   stock: {
     margin: 0,

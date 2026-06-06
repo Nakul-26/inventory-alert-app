@@ -7,6 +7,7 @@ const path = require('path');
 const connectDB = require('../lib/db');
 const Shop = require('../models/Shop');
 const AlertSettings = require('../models/AlertSettings');
+const ProductThreshold = require('../models/ProductThreshold');
 const { Resend } = require('resend');
 
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -326,6 +327,34 @@ app.get('/settings/:shop', async (req, res) => {
   }
 });
 
+// Save per-product threshold
+app.post('/threshold/:shop', async (req, res) => {
+  const { variantId, threshold } = req.body;
+  try {
+    await ProductThreshold.findOneAndUpdate(
+      { shop: req.params.shop, variantId },
+      { shop: req.params.shop, variantId, threshold },
+      { upsert: true, new: true }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get all thresholds for a shop
+app.get('/threshold/:shop', async (req, res) => {
+  try {
+    const thresholds = await ProductThreshold.find({ shop: req.params.shop });
+    // Return as a map: { variantId: threshold }
+    const map = {};
+    thresholds.forEach(t => map[t.variantId] = t.threshold);
+    res.json(map);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Test alert route
 app.get('/test-alert/:shop', async (req, res) => {
   try {
@@ -366,32 +395,46 @@ app.post('/webhooks/inventory-update', async (req, res) => {
     const settings = await AlertSettings.findOne({ shop });
     if (!settings || !settings.email) return res.status(200).send('No settings found');
 
-    if (available <= settings.globalThreshold) {
-      const shopDoc = await Shop.findOne({ shop });
-      if (!shopDoc) return res.status(200).send('Shop not found');
+    const shopDoc = await Shop.findOne({ shop });
+    if (!shopDoc) return res.status(200).send('Shop not found');
 
-      // Fetch product and variant titles
-      const productsRes = await axios.get(
-        `https://${shop}/admin/api/2026-04/products.json?limit=250`,
-        { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
-      );
+    // Fetch product and variant titles
+    const productsRes = await axios.get(
+      `https://${shop}/admin/api/2026-04/products.json?limit=250`,
+      { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
+    );
 
-      let productTitle = 'Unknown Product';
-      let variantTitle = '';
-      let sku = 'N/A';
+    let productTitle = 'Unknown Product';
+    let variantTitle = '';
+    let sku = 'N/A';
+    let variantId = null;
 
-      // Find the matching variant
-      productsRes.data.products.some(p => {
-        const variant = p.variants.find(v => v.inventory_item_id === inventory_item_id);
-        if (variant) {
-          productTitle = p.title;
-          variantTitle = variant.title === 'Default Title' ? '' : ` - ${variant.title}`;
-          sku = variant.sku || 'N/A';
-          return true;
-        }
-        return false;
+    // Find the matching variant
+    productsRes.data.products.some(p => {
+      const variant = p.variants.find(v => v.inventory_item_id === inventory_item_id);
+      if (variant) {
+        productTitle = p.title;
+        variantTitle = variant.title === 'Default Title' ? '' : ` - ${variant.title}`;
+        sku = variant.sku || 'N/A';
+        variantId = variant.id;
+        return true;
+      }
+      return false;
+    });
+
+    // Get per-product threshold or fall back to global
+    let threshold = settings.globalThreshold;
+    if (variantId) {
+      const productThreshold = await ProductThreshold.findOne({
+        shop,
+        variantId: String(variantId)
       });
+      if (productThreshold) {
+        threshold = productThreshold.threshold;
+      }
+    }
 
+    if (available <= threshold) {
       // Send email
       await resend.emails.send({
         from: 'onboarding@resend.dev',
@@ -403,12 +446,12 @@ app.post('/webhooks/inventory-update', async (req, res) => {
           <div style="padding: 16px; border: 1px solid #e2e8f0; border-radius: 8px; background-color: #f7fafc;">
             <p style="margin: 0; font-size: 18px; font-weight: bold;">${productTitle}${variantTitle}</p>
             <p style="margin: 8px 0 0 0; color: #4a5568;">SKU: ${sku}</p>
-            <p style="margin: 8px 0 0 0; font-size: 20px; color: #c53030; font-weight: bold;">${available} remaining</p>
+            <p style="margin: 8px 0 0 0; font-size: 20px; color: #c53030; font-weight: bold;">${available} remaining (Threshold: ${threshold})</p>
           </div>
           <p style="margin-top: 24px;">Log in to your Shopify store to restock.</p>
         `
       });
-      console.log(`📧 Low stock alert sent to ${settings.email} for ${productTitle}`);
+      console.log(`📧 Low stock alert sent to ${settings.email} for ${productTitle} (Threshold: ${threshold})`);
     }
 
     res.status(200).send('Webhook processed');
