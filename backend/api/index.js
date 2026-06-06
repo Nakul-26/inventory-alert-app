@@ -398,40 +398,59 @@ app.post('/webhooks/inventory-update', async (req, res) => {
     const shopDoc = await Shop.findOne({ shop });
     if (!shopDoc) return res.status(200).send('Shop not found');
 
-    // Fetch product and variant titles
-    const productsRes = await axios.get(
-      `https://${shop}/admin/api/2026-04/products.json?limit=250`,
-      { headers: { 'X-Shopify-Access-Token': shopDoc.accessToken } }
+    // Fetch variant details using GraphQL (more efficient and GID consistent)
+    const inventoryItemGid = `gid://shopify/InventoryItem/${inventory_item_id}`;
+    
+    const graphqlQuery = {
+      query: `
+        query getVariant($id: ID!) {
+          inventoryItem(id: $id) {
+            variant {
+              id
+              title
+              sku
+              product {
+                title
+              }
+            }
+          }
+        }
+      `,
+      variables: { id: inventoryItemGid }
+    };
+
+    const shopifyRes = await axios.post(
+      `https://${shop}/admin/api/2026-04/graphql.json`,
+      graphqlQuery,
+      {
+        headers: {
+          'X-Shopify-Access-Token': shopDoc.accessToken,
+          'Content-Type': 'application/json'
+        }
+      }
     );
 
-    let productTitle = 'Unknown Product';
-    let variantTitle = '';
-    let sku = 'N/A';
-    let variantId = null;
+    const variantData = shopifyRes.data?.data?.inventoryItem?.variant;
+    
+    if (!variantData) {
+      console.warn(`⚠️ Could not find variant for inventory item ${inventory_item_id}`);
+      return res.status(200).send('Variant not found');
+    }
 
-    // Find the matching variant
-    productsRes.data.products.some(p => {
-      const variant = p.variants.find(v => v.inventory_item_id === inventory_item_id);
-      if (variant) {
-        productTitle = p.title;
-        variantTitle = variant.title === 'Default Title' ? '' : ` - ${variant.title}`;
-        sku = variant.sku || 'N/A';
-        variantId = variant.id;
-        return true;
-      }
-      return false;
-    });
+    const productTitle = variantData.product.title;
+    const variantTitle = variantData.title === 'Default Title' ? '' : ` - ${variantData.title}`;
+    const sku = variantData.sku || 'N/A';
+    const variantId = variantData.id; // This is a GID
 
     // Get per-product threshold or fall back to global
     let threshold = settings.globalThreshold;
-    if (variantId) {
-      const productThreshold = await ProductThreshold.findOne({
-        shop,
-        variantId: String(variantId)
-      });
-      if (productThreshold) {
-        threshold = productThreshold.threshold;
-      }
+    const productThreshold = await ProductThreshold.findOne({
+      shop,
+      variantId: String(variantId)
+    });
+    
+    if (productThreshold) {
+      threshold = productThreshold.threshold;
     }
 
     if (available <= threshold) {
