@@ -76,16 +76,16 @@ app.use((req, res, next) => {
 
 const { SHOPIFY_API_KEY, SHOPIFY_API_SECRET, SCOPES, HOST } = process.env;
 
-// Middleware to ensure DB is connected (Remove this or use once)
-// app.use(async (req, res, next) => {
-//   try {
-//     await connectDB();
-//     next();
-//   } catch (err) {
-//     console.error('Database connection error:', err);
-//     res.status(500).send('Internal Server Error');
-//   }
-// });
+// Middleware to ensure DB is connected
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('Database connection error:', err);
+    res.status(500).send(`Database Connection Error: ${err.message}`);
+  }
+});
 
 // Root route
 app.get('/', async (req, res) => {
