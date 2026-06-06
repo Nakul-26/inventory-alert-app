@@ -95,11 +95,18 @@ function App() {
   };
 
   useEffect(() => {
-    if (!shop) return;
-
-    // Use setTimeout to avoid synchronous state updates in effect
+    // Check backend health once on mount
     const timer = setTimeout(() => {
       checkBackendHealth();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!shop) return;
+
+    // Fetch initial data when shop is available
+    const timer = setTimeout(() => {
       fetchInitialData(shop);
     }, 0);
     
